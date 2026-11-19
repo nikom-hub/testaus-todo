@@ -1,25 +1,46 @@
-// ***********************************************
-// This example commands.js shows you how to
-// create various custom commands and overwrite
-// existing commands.
-//
-// For more comprehensive examples of custom
-// commands please read more here:
-// https://on.cypress.io/custom-commands
-// ***********************************************
-//
-//
-// -- This is a parent command --
-// Cypress.Commands.add('login', (email, password) => { ... })
-//
-//
-// -- This is a child command --
-// Cypress.Commands.add('drag', { prevSubject: 'element'}, (subject, options) => { ... })
-//
-//
-// -- This is a dual command --
-// Cypress.Commands.add('dismiss', { prevSubject: 'optional'}, (subject, options) => { ... })
-//
-//
-// -- This will overwrite an existing command --
-// Cypress.Commands.overwrite('visit', (originalFn, url, options) => { ... })
+const STORAGE_KEY = 'todo_tasks_v1';
+
+// Avaa sovellus valmiiksi täytetyllä localStoragella
+Cypress.Commands.add('visitWithTasks', (tasks) => {
+  cy.visit('/', {
+    onBeforeLoad(win) {
+      win.localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+    },
+  });
+});
+
+// Sama, mutta raakamerkkijonolla (rikkinäisen datan testaamiseen)
+Cypress.Commands.add('visitWithRawStorage', (raw) => {
+  cy.visit('/', {
+    onBeforeLoad(win) {
+      win.localStorage.setItem(STORAGE_KEY, raw);
+    },
+  });
+});
+
+// Täyttää lomakkeen ja painaa Save
+Cypress.Commands.add('addTask', ({ topic, priority, status, description }) => {
+  if (topic) {
+    cy.get('#topic')
+      .clear()
+      .type(topic, { delay: 0, parseSpecialCharSequences: false });
+  }
+  if (priority) cy.get('#priority').select(priority);
+  if (status) cy.get('#status').select(status);
+  if (description) {
+    cy.get('#description')
+      .clear()
+      .type(description, { delay: 0, parseSpecialCharSequences: false });
+  }
+  cy.get('#save-btn').click();
+});
+
+// Palauttaa tehtävärivin aiheen perusteella
+Cypress.Commands.add('taskRow', (topic) =>
+  cy.contains('li.task .title', topic).closest('li.task'),
+);
+
+// Lukee tallennetut tehtävät suoraan localStoragesta
+Cypress.Commands.add('storedTasks', () =>
+  cy.window().then((win) => JSON.parse(win.localStorage.getItem(STORAGE_KEY))),
+);
