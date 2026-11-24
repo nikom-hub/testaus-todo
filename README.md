@@ -16,6 +16,10 @@ A minimal full-stack JavaScript Todo application intended for learning unit test
 - Mark task as complete (toggle complete/undo)
 - Delete a task
 - Sorted list: not-done first, higher priority first, newest first
+- Filter the list by priority: click **Low**, **Med** or **High** above the list to
+  show only tasks with that priority. Click the active button again, or **Show all**,
+  to remove the filter. The filter is kept in memory only (not saved), so a page
+  reload shows every task again.
 
 ### Getting started
 
@@ -61,3 +65,7 @@ A minimal full-stack JavaScript Todo application intended for learning unit test
   unit test scope.
 - Run tests with `npm test` (single run) or `npm run test:watch` (watch mode).
 - E2E tests (Cypress): target user flows—create, update, complete/undo, delete; use `/health` to check server readiness.
+  - Start the app (`npm start`), then run `npm run test:e2e` (headless) or `npm run cy:open` (interactive).
+  - `cypress/e2e/filter.cy.js` covers the priority filter and removing it.
+- CI: `.github/workflows/e2e.yml` runs the Cypress E2E tests with GitHub Actions on every
+  push to `main`/`master`, on pull requests, and manually (workflow_dispatch).

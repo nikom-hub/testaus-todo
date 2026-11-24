@@ -138,6 +138,30 @@ button:disabled {
 .pill.high {
   color: #c3425b;
 }
+.pill.all {
+  color: var(--text);
+}
+
+/* Priority filter buttons (the legend pills are clickable) */
+button.pill {
+  border: 2px solid transparent;
+  line-height: 1.4;
+}
+button.pill:hover {
+  background-color: #eee;
+}
+button.pill:focus-visible {
+  outline: 2px solid var(--brand-2);
+  outline-offset: 2px;
+}
+button.pill[aria-pressed='true'] {
+  border-color: var(--brand-2);
+  background-color: #e3fbfa;
+}
+
+.empty.filter-empty {
+  color: var(--card-text);
+}
 
 .task-list {
   list-style: none;

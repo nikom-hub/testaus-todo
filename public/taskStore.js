@@ -109,6 +109,19 @@ export function sortTasks(tasks) {
 }
 
 /**
+ * Returns a new array containing only the tasks with the given priority.
+ * A falsy priority means "no filter" and returns a copy of all tasks.
+ * Does not mutate the input array.
+ * @param {Task[]} tasks
+ * @param {string | null | undefined} priority - 'low' | 'medium' | 'high'
+ * @returns {Task[]}
+ */
+export function filterTasksByPriority(tasks, priority) {
+  if (!priority) return [...tasks];
+  return tasks.filter((t) => t.priority === priority);
+}
+
+/**
  * Builds a new task from form input.
  * @param {TaskInput} payload
  * @param {number} now - timestamp to use for createdAt/updatedAt

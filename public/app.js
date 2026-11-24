@@ -5,6 +5,7 @@ import {
   loadTasks,
   saveTasks,
   sortTasks,
+  filterTasksByPriority,
   createTask,
   updateTask,
   toggleTaskCompletion,
@@ -46,20 +47,58 @@ const list = /** @type {HTMLUListElement} */ (
 const emptyState = /** @type {HTMLElement} */ (
   document.getElementById('empty-state')
 );
+const filterEmptyState = /** @type {HTMLElement} */ (
+  document.getElementById('filter-empty-state')
+);
+const filterBar = /** @type {HTMLElement} */ (
+  document.getElementById('priority-filter')
+);
+const filterButtons = /** @type {HTMLElement[]} */ ([
+  ...filterBar.querySelectorAll('[data-filter]'),
+]);
 
 // State
 let tasks = loadTasks();
+// Active priority filter: 'low' | 'medium' | 'high', or null = show all.
+// Kept in memory only, so a page reload always shows every task again.
+let activePriority = null;
+
+function priorityLabel(priority) {
+  return priority.charAt(0).toUpperCase() + priority.slice(1);
+}
+
+// Reflect the active filter on the buttons (aria-pressed also drives styling)
+function updateFilterButtons() {
+  filterButtons.forEach((btn) => {
+    const value = btn.dataset.filter;
+    const isActive =
+      value === 'all' ? activePriority === null : value === activePriority;
+    btn.setAttribute('aria-pressed', String(isActive));
+  });
+}
 
 // Render
 function render() {
   list.innerHTML = '';
+  updateFilterButtons();
   if (!tasks.length) {
     emptyState.style.display = 'block';
+    filterEmptyState.style.display = 'none';
     return;
   }
   emptyState.style.display = 'none';
 
-  sortTasks(tasks).forEach((t) => {
+  const visibleTasks = filterTasksByPriority(tasks, activePriority);
+  if (visibleTasks.length === 0) {
+    filterEmptyState.textContent = `No tasks with ${priorityLabel(
+      activePriority,
+    )} priority. Click "Show all" to see every task.`;
+    filterEmptyState.style.display = 'block';
+  } else {
+    filterEmptyState.style.display = 'none';
+  }
+
+  sortTasks(visibleTasks).forEach((t) => {
     const li = document.createElement('li');
     li.className = 'task' + (t.completed ? ' done' : '');
     li.dataset.id = t.id;
@@ -88,6 +127,16 @@ function render() {
     list.appendChild(li);
   });
 }
+
+// Priority filter: clicking a priority shows only tasks with that priority.
+// Clicking the active priority again, or "Show all", removes the filter.
+filterBar.addEventListener('click', (e) => {
+  const btn = /** @type {HTMLElement} */ (e.target).closest('[data-filter]');
+  if (!btn) return;
+  const value = btn.dataset.filter;
+  activePriority = value === 'all' || value === activePriority ? null : value;
+  render();
+});
 
 // Form handling
 form.addEventListener('submit', (e) => {

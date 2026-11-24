@@ -1,0 +1,513 @@
+diff --git a/.github/workflows/e2e.yml b/.github/workflows/e2e.yml
+new file mode 100644
+index 0000000..65d3330
+--- /dev/null
++++ b/.github/workflows/e2e.yml
+@@ -0,0 +1,60 @@
++name: E2E tests
++
++on:
++  push:
++    branches: [main, master]
++  pull_request:
++  workflow_dispatch:
++
++permissions:
++  contents: read
++
++jobs:
++  cypress:
++    name: Cypress E2E
++    runs-on: ubuntu-latest
++    timeout-minutes: 15
++
++    steps:
++      - name: Check out repository
++        uses: actions/checkout@v4
++
++      - name: Set up Node.js
++        uses: actions/setup-node@v4
++        with:
++          node-version: 22
++          cache: npm
++
++      - name: Cache Cypress binary
++        uses: actions/cache@v4
++        with:
++          path: ~/.cache/Cypress
++          key: cypress-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
++
++      - name: Install dependencies
++        run: npm ci
++
++      - name: Start the app in the background
++        run: |
++          nohup npm start > server.log 2>&1 &
++          for i in $(seq 1 30); do
++            if curl -sf http://localhost:5173/health > /dev/null; then
++              echo "Server is up"
++              exit 0
++            fi
++            sleep 1
++          done
++          echo "Server did not start in time" >&2
++          cat server.log >&2
++          exit 1
++
++      - name: Run Cypress E2E tests
++        run: npm run test:e2e
++
++      - name: Upload screenshots of failed tests
++        if: failure()
++        uses: actions/upload-artifact@v4
++        with:
++          name: cypress-screenshots
++          path: cypress/screenshots
++          if-no-files-found: ignore
+diff --git a/README.md b/README.md
+index 086caa8..5b59f03 100644
+--- a/README.md
++++ b/README.md
+@@ -16,6 +16,10 @@ A minimal full-stack JavaScript Todo application intended for learning unit test
+ - Mark task as complete (toggle complete/undo)
+ - Delete a task
+ - Sorted list: not-done first, higher priority first, newest first
++- Filter the list by priority: click **Low**, **Med** or **High** above the list to
++  show only tasks with that priority. Click the active button again, or **Show all**,
++  to remove the filter. The filter is kept in memory only (not saved), so a page
++  reload shows every task again.
+ 
+ ### Getting started
+ 
+@@ -61,3 +65,7 @@ A minimal full-stack JavaScript Todo application intended for learning unit test
+   unit test scope.
+ - Run tests with `npm test` (single run) or `npm run test:watch` (watch mode).
+ - E2E tests (Cypress): target user flows—create, update, complete/undo, delete; use `/health` to check server readiness.
++  - Start the app (`npm start`), then run `npm run test:e2e` (headless) or `npm run cy:open` (interactive).
++  - `cypress/e2e/filter.cy.js` covers the priority filter and removing it.
++- CI: `.github/workflows/e2e.yml` runs the Cypress E2E tests with GitHub Actions on every
++  push to `main`/`master`, on pull requests, and manually (workflow_dispatch).
+diff --git a/cypress/e2e/filter.cy.js b/cypress/e2e/filter.cy.js
+new file mode 100644
+index 0000000..96ab462
+--- /dev/null
++++ b/cypress/e2e/filter.cy.js
+@@ -0,0 +1,230 @@
++const KEY = 'todo_tasks_v1';
++let seq = 0;
++
++// Testitehtävän tehdas: jokaiselle uniikki id ja oletuskentät
++const makeTask = (over = {}) => {
++  seq += 1;
++  return {
++    id: `t_filter${seq}`,
++    topic: `Tehtävä ${seq}`,
++    priority: 'medium',
++    status: 'todo',
++    description: '',
++    completed: false,
++    createdAt: seq,
++    updatedAt: seq,
++    ...over,
++  };
++};
++
++// Tarkistaa listassa näkyvien tehtävien aiheet järjestyksessä
++const expectTopics = (expected) =>
++  cy.get('#task-list .title').should(($t) => {
++    expect([...$t].map((e) => e.textContent.trim())).to.deep.equal(expected);
++  });
++
++// Tarkistaa, mikä suodatinnappi on valittuna ('all' | 'low' | 'medium' | 'high')
++const expectActiveFilter = (active) => {
++  ['all', 'low', 'medium', 'high'].forEach((key) => {
++    cy.get(`#filter-${key}`).should(
++      'have.attr',
++      'aria-pressed',
++      String(key === active),
++    );
++  });
++};
++
++// Siemendata: 2 high (toinen valmis), 1 medium, 2 low
++const seedTasks = () => [
++  makeTask({ topic: 'High A', priority: 'high', createdAt: 10 }),
++  makeTask({
++    topic: 'High B (valmis)',
++    priority: 'high',
++    createdAt: 20,
++    completed: true,
++    status: 'done',
++  }),
++  makeTask({ topic: 'Medium A', priority: 'medium', createdAt: 30 }),
++  makeTask({ topic: 'Low A', priority: 'low', createdAt: 40 }),
++  makeTask({ topic: 'Low B', priority: 'low', createdAt: 50 }),
++];
++
++// Kaikki siemendatan tehtävät oletusjärjestyksessä
++const ALL_TOPICS = [
++  'High A',
++  'Medium A',
++  'Low B',
++  'Low A',
++  'High B (valmis)',
++];
++
++describe('Prioriteettisuodatus', () => {
++  beforeEach(() => {
++    cy.visitWithTasks(seedTasks());
++  });
++
++  it('näyttää oletuksena kaikki tehtävät ja Show all on valittuna', () => {
++    expectTopics(ALL_TOPICS);
++    expectActiveFilter('all');
++    cy.get('#filter-empty-state').should('not.be.visible');
++  });
++
++  [
++    ['high', ['High A', 'High B (valmis)']],
++    ['medium', ['Medium A']],
++    ['low', ['Low B', 'Low A']],
++  ].forEach(([priority, expected]) => {
++    it(`${priority}-napin klikkaus näyttää vain ${priority}-prioriteetin tehtävät`, () => {
++      cy.get(`#filter-${priority}`).click();
++      cy.get('li.task').should('have.length', expected.length);
++      expectTopics(expected);
++      expectActiveFilter(priority);
++      cy.get('#task-list .badge[class*="prio-"]').each(($badge) => {
++        expect($badge).to.have.class(`prio-${priority}`);
++      });
++    });
++  });
++
++  it('suodatettu lista säilyttää järjestyksen ja näyttää myös valmiit tehtävät', () => {
++    cy.get('#filter-high').click();
++    // Keskeneräinen ensin, valmis viimeisenä
++    expectTopics(['High A', 'High B (valmis)']);
++    cy.taskRow('High B (valmis)').should('have.class', 'done');
++  });
++
++  it('Show all poistaa suodatuksen ja palauttaa kaikki tehtävät', () => {
++    cy.get('#filter-high').click();
++    cy.get('li.task').should('have.length', 2);
++
++    cy.get('#filter-all').click();
++    cy.get('li.task').should('have.length', 5);
++    expectTopics(ALL_TOPICS);
++    expectActiveFilter('all');
++  });
++
++  it('Show all ilman aktiivista suodatusta ei muuta mitään', () => {
++    cy.get('#filter-all').click();
++    expectTopics(ALL_TOPICS);
++    expectActiveFilter('all');
++  });
++
++  it('aktiivisen prioriteettinapin uusi klikkaus poistaa suodatuksen', () => {
++    cy.get('#filter-medium').click();
++    expectTopics(['Medium A']);
++
++    cy.get('#filter-medium').click();
++    expectTopics(ALL_TOPICS);
++    expectActiveFilter('all');
++  });
++
++  it('suodatuksen vaihto prioriteetista toiseen näyttää vain uuden prioriteetin tehtävät', () => {
++    cy.get('#filter-high').click();
++    expectTopics(['High A', 'High B (valmis)']);
++
++    cy.get('#filter-low').click();
++    expectTopics(['Low B', 'Low A']);
++    expectActiveFilter('low');
++  });
++
++  it('suodatus ei muuta tallennettua dataa eikä tallenna mitään lisää selaimeen', () => {
++    cy.storedTasks().then((before) => {
++      cy.get('#filter-high').click();
++      cy.get('#filter-low').click();
++      cy.get('#filter-all').click();
++      cy.storedTasks().should('deep.equal', before);
++      cy.window().then((win) => {
++        expect(Object.keys(win.localStorage)).to.deep.equal([KEY]);
++        expect(Object.keys(win.sessionStorage)).to.have.length(0);
++      });
++    });
++  });
++
++  it('suodatus ei säily sivun uudelleenlatauksen yli', () => {
++    cy.get('#filter-high').click();
++    cy.get('li.task').should('have.length', 2);
++
++    cy.reload();
++    expectTopics(ALL_TOPICS);
++    expectActiveFilter('all');
++  });
++});
++
++describe('Prioriteettisuodatus: tyhjät tilat', () => {
++  it('näyttää viestin, kun valitulla prioriteetilla ei ole tehtäviä, ja Show all piilottaa sen', () => {
++    cy.visitWithTasks([makeTask({ topic: 'Vain high', priority: 'high' })]);
++
++    cy.get('#filter-low').click();
++    cy.get('li.task').should('have.length', 0);
++    cy.get('#filter-empty-state')
++      .should('be.visible')
++      .and('contain', 'No tasks with Low priority');
++    // "Ei tehtäviä lainkaan" -viesti on eri asia eikä saa näkyä
++    cy.get('#empty-state').should('not.be.visible');
++
++    cy.get('#filter-all').click();
++    cy.get('#filter-empty-state').should('not.be.visible');
++    cy.get('li.task').should('have.length', 1);
++  });
++
++  it('ei näytä suodatuksen tyhjää viestiä, kun tehtäviä ei ole lainkaan', () => {
++    cy.visit('/');
++    cy.get('#filter-high').click();
++    cy.get('li.task').should('have.length', 0);
++    cy.get('#empty-state').should('be.visible');
++    cy.get('#filter-empty-state').should('not.be.visible');
++  });
++});
++
++describe('Prioriteettisuodatus yhdessä muiden toimintojen kanssa', () => {
++  beforeEach(() => {
++    cy.visitWithTasks(seedTasks());
++  });
++
++  it('suodatinta vastaava uusi tehtävä näkyy heti, muu vasta Show all:n jälkeen', () => {
++    cy.get('#filter-low').click();
++
++    cy.addTask({ topic: 'Uusi low', priority: 'low' });
++    // Uusin ensin samalla prioriteetilla
++    expectTopics(['Uusi low', 'Low B', 'Low A']);
++
++    cy.addTask({ topic: 'Uusi high', priority: 'high' });
++    cy.get('#task-list').should('not.contain', 'Uusi high');
++    expectActiveFilter('low');
++
++    cy.get('#filter-all').click();
++    cy.get('#task-list').should('contain', 'Uusi high');
++    cy.get('li.task').should('have.length', 7);
++  });
++
++  it('Complete ja Delete toimivat suodatetussa listassa eikä suodatus nollaudu', () => {
++    cy.on('window:confirm', () => true);
++    cy.get('#filter-high').click();
++
++    cy.taskRow('High A').find('[data-action=complete]').click();
++    cy.taskRow('High A').should('have.class', 'done');
++    cy.get('li.task').should('have.length', 2);
++    expectActiveFilter('high');
++
++    cy.taskRow('High A').find('[data-action=delete]').click();
++    expectTopics(['High B (valmis)']);
++    expectActiveFilter('high');
++
++    cy.get('#filter-all').click();
++    expectTopics(['Medium A', 'Low B', 'Low A', 'High B (valmis)']);
++  });
++
++  it('muokkaus toiseen prioriteettiin siirtää tehtävän pois suodatetusta listasta', () => {
++    cy.get('#filter-low').click();
++
++    cy.taskRow('Low A').find('[data-action=edit]').click();
++    cy.get('#priority').select('high');
++    cy.get('#save-btn').click();
++
++    expectTopics(['Low B']);
++    cy.get('#form-title').should('have.text', 'Create Task');
++    expectActiveFilter('low');
++
++    cy.get('#filter-all').click();
++    cy.taskRow('Low A').find('.badge.prio-high').should('exist');
++  });
++});
+diff --git a/package.json b/package.json
+index 957bf27..0513608 100644
+--- a/package.json
++++ b/package.json
+@@ -8,7 +8,9 @@
+     "start": "node server.js",
+     "dev": "node server.js",
+     "test": "cross-env NODE_OPTIONS=--no-experimental-webstorage vitest run",
+-    "test:watch": "cross-env NODE_OPTIONS=--no-experimental-webstorage vitest"
++    "test:watch": "cross-env NODE_OPTIONS=--no-experimental-webstorage vitest",
++    "test:e2e": "cypress run",
++    "cy:open": "cypress open"
+   },
+   "engines": {
+     "node": ">=18"
+diff --git a/public/app.js b/public/app.js
+index 37fef81..53f549e 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -5,6 +5,7 @@ import {
+   loadTasks,
+   saveTasks,
+   sortTasks,
++  filterTasksByPriority,
+   createTask,
+   updateTask,
+   toggleTaskCompletion,
+@@ -46,20 +47,58 @@ const list = /** @type {HTMLUListElement} */ (
+ const emptyState = /** @type {HTMLElement} */ (
+   document.getElementById('empty-state')
+ );
++const filterEmptyState = /** @type {HTMLElement} */ (
++  document.getElementById('filter-empty-state')
++);
++const filterBar = /** @type {HTMLElement} */ (
++  document.getElementById('priority-filter')
++);
++const filterButtons = /** @type {HTMLElement[]} */ ([
++  ...filterBar.querySelectorAll('[data-filter]'),
++]);
+ 
+ // State
+ let tasks = loadTasks();
++// Active priority filter: 'low' | 'medium' | 'high', or null = show all.
++// Kept in memory only, so a page reload always shows every task again.
++let activePriority = null;
++
++function priorityLabel(priority) {
++  return priority.charAt(0).toUpperCase() + priority.slice(1);
++}
++
++// Reflect the active filter on the buttons (aria-pressed also drives styling)
++function updateFilterButtons() {
++  filterButtons.forEach((btn) => {
++    const value = btn.dataset.filter;
++    const isActive =
++      value === 'all' ? activePriority === null : value === activePriority;
++    btn.setAttribute('aria-pressed', String(isActive));
++  });
++}
+ 
+ // Render
+ function render() {
+   list.innerHTML = '';
++  updateFilterButtons();
+   if (!tasks.length) {
+     emptyState.style.display = 'block';
++    filterEmptyState.style.display = 'none';
+     return;
+   }
+   emptyState.style.display = 'none';
+ 
+-  sortTasks(tasks).forEach((t) => {
++  const visibleTasks = filterTasksByPriority(tasks, activePriority);
++  if (visibleTasks.length === 0) {
++    filterEmptyState.textContent = `No tasks with ${priorityLabel(
++      activePriority,
++    )} priority. Click "Show all" to see every task.`;
++    filterEmptyState.style.display = 'block';
++  } else {
++    filterEmptyState.style.display = 'none';
++  }
++
++  sortTasks(visibleTasks).forEach((t) => {
+     const li = document.createElement('li');
+     li.className = 'task' + (t.completed ? ' done' : '');
+     li.dataset.id = t.id;
+@@ -89,6 +128,16 @@ function render() {
+   });
+ }
+ 
++// Priority filter: clicking a priority shows only tasks with that priority.
++// Clicking the active priority again, or "Show all", removes the filter.
++filterBar.addEventListener('click', (e) => {
++  const btn = /** @type {HTMLElement} */ (e.target).closest('[data-filter]');
++  if (!btn) return;
++  const value = btn.dataset.filter;
++  activePriority = value === 'all' || value === activePriority ? null : value;
++  render();
++});
++
+ // Form handling
+ form.addEventListener('submit', (e) => {
+   e.preventDefault();
+diff --git a/public/index.html b/public/index.html
+index 074eba3..2324539 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -56,14 +56,16 @@
+     <section class="card">
+       <div class="list-header">
+         <h2>Tasks</h2>
+-        <div class="legend">
+-          <span class="pill low">Low</span>
+-          <span class="pill medium">Med</span>
+-          <span class="pill high">High</span>
++        <div class="legend" id="priority-filter" role="group" aria-label="Filter tasks by priority">
++          <button type="button" class="pill all" id="filter-all" data-filter="all" aria-pressed="true">Show all</button>
++          <button type="button" class="pill low" id="filter-low" data-filter="low" aria-pressed="false">Low</button>
++          <button type="button" class="pill medium" id="filter-medium" data-filter="medium" aria-pressed="false">Med</button>
++          <button type="button" class="pill high" id="filter-high" data-filter="high" aria-pressed="false">High</button>
+         </div>
+       </div>
+       <ul id="task-list" class="task-list"></ul>
+       <p id="empty-state" class="empty">No tasks yet. Add your first task above.</p>
++      <p id="filter-empty-state" class="empty filter-empty" style="display: none"></p>
+     </section>
+   </main>
+ 
+diff --git a/public/styles.css b/public/styles.css
+index 440342d..95fc009 100644
+--- a/public/styles.css
++++ b/public/styles.css
+@@ -138,6 +138,30 @@ button:disabled {
+ .pill.high {
+   color: #c3425b;
+ }
++.pill.all {
++  color: var(--text);
++}
++
++/* Priority filter buttons (the legend pills are clickable) */
++button.pill {
++  border: 2px solid transparent;
++  line-height: 1.4;
++}
++button.pill:hover {
++  background-color: #eee;
++}
++button.pill:focus-visible {
++  outline: 2px solid var(--brand-2);
++  outline-offset: 2px;
++}
++button.pill[aria-pressed='true'] {
++  border-color: var(--brand-2);
++  background-color: #e3fbfa;
++}
++
++.empty.filter-empty {
++  color: var(--card-text);
++}
+ 
+ .task-list {
+   list-style: none;
+diff --git a/public/taskStore.js b/public/taskStore.js
+index 48b0705..7046283 100644
+--- a/public/taskStore.js
++++ b/public/taskStore.js
+@@ -108,6 +108,19 @@ export function sortTasks(tasks) {
+   });
+ }
+ 
++/**
++ * Returns a new array containing only the tasks with the given priority.
++ * A falsy priority means "no filter" and returns a copy of all tasks.
++ * Does not mutate the input array.
++ * @param {Task[]} tasks
++ * @param {string | null | undefined} priority - 'low' | 'medium' | 'high'
++ * @returns {Task[]}
++ */
++export function filterTasksByPriority(tasks, priority) {
++  if (!priority) return [...tasks];
++  return tasks.filter((t) => t.priority === priority);
++}
++
+ /**
+  * Builds a new task from form input.
+  * @param {TaskInput} payload
