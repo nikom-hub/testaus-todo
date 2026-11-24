@@ -2,7 +2,7 @@ name: E2E tests
 
 on:
   push:
-    branches: [main, priority-feature]
+    branches: [main, priority-flter]
   pull_request:
   workflow_dispatch:
 
